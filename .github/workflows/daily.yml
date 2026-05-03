@@ -2,7 +2,7 @@ name: Daily Email Agent
 
 on:
   schedule:
-    - cron: '0 8 * * *'   # 9AM BST (8AM UTC) — adjust for winter: '0 9 * * *'
+    - cron: '*/5 * * * *'   # 9AM BST (8AM UTC) — adjust for winter: '0 9 * * *'
   workflow_dispatch:        # lets you trigger it manually from GitHub UI
 
 jobs:
