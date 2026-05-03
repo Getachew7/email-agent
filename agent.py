@@ -11,7 +11,7 @@ import os
 GMAIL_ADDRESS  = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASS = os.environ["GMAIL_APP_PASS"]
 GROQ_API_KEY   = os.environ["GROQ_API_KEY"]
-MODEL          = "llama3-8b-8192"
+MODEL = "llama-3.1-8b-instant"
 LOOKBACK_HOURS = 24
 
 # Labels that will be created in your Gmail automatically
