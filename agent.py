@@ -10,11 +10,15 @@ GMAIL_ADDRESS  = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASS = os.environ["GMAIL_APP_PASS"]
 GROQ_API_KEY   = os.environ["GROQ_API_KEY"]
 MODEL          = "llama-3.1-8b-instant"
-LOOKBACK_MINS  = 6          # slightly over 5 to avoid gaps between runs
+LOOKBACK_MINS  = 6
 
-LABEL_PROCESSED   = "AI-Processed"
-LABEL_NEEDS_REPLY = "Needs-Reply"
-LABEL_NO_REPLY    = "No-Reply-Needed"
+LABELS = {
+    "URGENT":       "AI-Urgent",
+    "NEEDS-REPLY":  "AI-Needs-Reply",
+    "NEWSLETTER":   "AI-Newsletter",
+    "NOTIFICATION": "AI-Notification",
+    "NO-ACTION":    "AI-No-Action",
+}
 # ─────────────────────────────────────────────────────────
 
 client = Groq(api_key=GROQ_API_KEY)
@@ -22,7 +26,7 @@ client = Groq(api_key=GROQ_API_KEY)
 def ensure_labels(mail):
     result, folders = mail.list()
     existing = [f.decode().split('"/"')[-1].strip() for f in folders]
-    for label in [LABEL_PROCESSED, LABEL_NEEDS_REPLY, LABEL_NO_REPLY]:
+    for label in LABELS.values():
         if label not in existing:
             mail.create(label)
             print(f"  Created label: {label}")
@@ -30,8 +34,7 @@ def ensure_labels(mail):
 def apply_label(mail, msg_id, label):
     mail.copy(msg_id, label)
 
-def fetch_unlabelled_emails(mail):
-    """Fetch unread emails NOT already labelled as AI-Processed."""
+def fetch_unread_emails(mail):
     mail.select("inbox")
     since = (datetime.now() - timedelta(minutes=LOOKBACK_MINS)).strftime("%d-%b-%Y")
     _, message_ids = mail.search(None, f'(UNSEEN SINCE "{since}")')
@@ -61,27 +64,39 @@ def fetch_unlabelled_emails(mail):
             "id":      mid,
             "subject": subject,
             "sender":  msg["From"],
-            "body":    body[:2000]
+            "body":    body[:500]
         })
 
     return emails
 
 def classify_email(em):
-    prompt = f"""Classify this email. Reply with ONLY one of these two words:
-NEEDS-REPLY
-NO-REPLY-NEEDED
+    prompt = f"""Classify this email into EXACTLY one category:
+URGENT          - needs reply today
+NEEDS-REPLY     - needs reply but not urgent
+NEWSLETTER      - marketing or newsletter
+NOTIFICATION    - automated system notification
+NO-ACTION       - informational, no reply needed
 
 From: {em['sender']}
 Subject: {em['subject']}
-Body: {em['body'][:500]}"""
+Body: {em['body']}
+
+Reply with ONE word only."""
 
     response = client.chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=10
     )
+
     result = response.choices[0].message.content.strip().upper()
-    return "NEEDS-REPLY" in result
+
+    # Match response to a known label key
+    for key in LABELS:
+        if key in result:
+            return key
+
+    return "NO-ACTION"  # safe fallback if AI responds unexpectedly
 
 def main():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking inbox...")
@@ -91,17 +106,23 @@ def main():
 
     ensure_labels(mail)
 
-    emails = fetch_unlabelled_emails(mail)
+    emails = fetch_unread_emails(mail)
     print(f"Found {len(emails)} new unread email(s).")
+
+    icons = {
+        "URGENT":       "🚨",
+        "NEEDS-REPLY":  "🔴",
+        "NEWSLETTER":   "📰",
+        "NOTIFICATION": "🔔",
+        "NO-ACTION":    "✅",
+    }
 
     for em in emails:
         print(f"  → {em['subject'][:60]}")
-        needs_reply = classify_email(em)
-
-        apply_label(mail, em["id"], LABEL_PROCESSED)
-        apply_label(mail, em["id"], LABEL_NEEDS_REPLY if needs_reply else LABEL_NO_REPLY)
-
-        print(f"     {'🔴 Needs-Reply' if needs_reply else '✅ No-Reply-Needed'}")
+        category = classify_email(em)
+        label = LABELS[category]
+        apply_label(mail, em["id"], label)
+        print(f"     {icons[category]} {label}")
 
     mail.logout()
     print("Done.")
