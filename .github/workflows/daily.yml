@@ -1,0 +1,29 @@
+name: Daily Email Agent
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 9AM BST (8AM UTC) — adjust for winter: '0 9 * * *'
+  workflow_dispatch:        # lets you trigger it manually from GitHub UI
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install groq
+
+      - name: Run email agent
+        env:
+          GMAIL_ADDRESS:  ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+          GROQ_API_KEY:   ${{ secrets.GROQ_API_KEY }}
+        run: python agent.py
