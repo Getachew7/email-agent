@@ -5,23 +5,22 @@ import urllib.request
 import re
 import os
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from email.header import decode_header
 from datetime import datetime
 from groq import Groq
 
 # ── CONFIG ───────────────────────────────────────────────
-GMAIL_ADDRESS  = os.environ["GMAIL_ADDRESS"]
-GMAIL_APP_PASS = os.environ["GMAIL_APP_PASS"]
-GROQ_API_KEY   = os.environ["GROQ_API_KEY"]
-MODEL          = "llama-3.1-8b-instant"
+GMAIL_ADDRESS      = os.environ["GMAIL_ADDRESS"]
+GMAIL_APP_PASS     = os.environ["GMAIL_APP_PASS"]
+GROQ_API_KEY       = os.environ["GROQ_API_KEY"]
+MODEL              = "llama-3.1-8b-instant"
+DIGEST_HOUR        = 8        # 8 UTC = 9AM BST
 MAX_EMAILS_PER_RUN = 20
-DIGEST_HOUR    = 8   # 8AM UTC = 9AM BST
 
-# Add senders who should ALWAYS be flagged Urgent
 PRIORITY_SENDERS = [
-    "mebiratu21@gmail.com",
-    "info@destaintelligence.com",
-    # add any email address here
+    # "mum@gmail.com",
+    # "boss@work.com",
 ]
 
 LABELS = {
@@ -95,10 +94,27 @@ def fetch_unread_emails(mail):
 
     return emails
 
+# ── SAVE DRAFT ────────────────────────────────────────────
+
+def save_draft(mail, em, reply_text):
+    """Save a reply as a Gmail draft instead of sending it."""
+    msg = MIMEMultipart()
+    msg["Subject"] = f"Re: {em['subject']}"
+    msg["From"]    = GMAIL_ADDRESS
+    msg["To"]      = em["reply_to"]
+    msg.attach(MIMEText(reply_text, "plain"))
+
+    # Append to Gmail Drafts folder
+    mail.append(
+        "[Gmail]/Drafts",
+        "",
+        imaplib.Time2Internaldate(datetime.now().timestamp()),
+        msg.as_bytes()
+    )
+
 # ── CLASSIFICATION ────────────────────────────────────────
 
 def classify_email(em):
-    # Priority sender override — skip AI entirely
     sender_lower = em["sender"].lower()
     if any(p.lower() in sender_lower for p in PRIORITY_SENDERS):
         print(f"     ⭐ Priority sender — forced URGENT")
@@ -112,10 +128,10 @@ NOTIFICATION    - automated system alerts (GitHub, Google, social media notifica
 NO-ACTION       - informational only, no reply needed
 
 IMPORTANT RULES:
-- If a real person asks you a direct question → NEEDS-REPLY or URGENT
+- If a real person asks a direct question → NEEDS-REPLY or URGENT
 - If it starts with Hi/Hey/Hello from a real person → at least NEEDS-REPLY
 - Automated service emails → NOTIFICATION
-- Promotional/marketing emails → NEWSLETTER
+- Promotional or marketing emails → NEWSLETTER
 
 From: {em['sender']}
 Subject: {em['subject']}
@@ -137,17 +153,15 @@ Reply with ONE word only."""
 # ── AUTO-UNSUBSCRIBE ──────────────────────────────────────
 
 def auto_unsubscribe(em):
-    """Use List-Unsubscribe header to unsubscribe from newsletters."""
     header = em.get("unsubscribe", "")
     if not header:
         return False
 
-    # Try mailto unsubscribe
     mailto = re.search(r'<mailto:([^>]+)>', header)
     if mailto:
-        parts = mailto.group(1).split("?")
-        to_addr = parts[0]
-        subject = "unsubscribe"
+        parts    = mailto.group(1).split("?")
+        to_addr  = parts[0]
+        subject  = "unsubscribe"
         if len(parts) > 1:
             s = re.search(r'subject=([^&]+)', parts[1], re.I)
             if s:
@@ -164,7 +178,6 @@ def auto_unsubscribe(em):
         except:
             pass
 
-    # Try HTTP unsubscribe
     http = re.search(r'<(https?://[^>]+)>', header)
     if http:
         try:
@@ -175,57 +188,132 @@ def auto_unsubscribe(em):
 
     return False
 
-# ── AUTO-REPLY ────────────────────────────────────────────
+# ── DRAFT REPLY ───────────────────────────────────────────
 
-def draft_auto_reply(em):
-    """Ask AI whether this email is simple enough to auto-reply to."""
-    prompt = f"""You are a personal email assistant.
+def draft_reply(em, category):
+    """Draft a reply for all emails needing a response — simple or complex."""
 
-Decide if this email is simple enough for an auto-reply.
-Auto-reply if: casual greeting, "how are you", simple yes/no question, meeting confirmation.
-Do NOT auto-reply if: work tasks, legal/financial, anything requiring real thought.
+    if category == "URGENT":
+        tone = "urgent and professional"
+        length = "3-5 sentences"
+        detail = "Acknowledge the urgency, address the key point directly, and confirm next steps or your availability."
+    elif category == "NEEDS-REPLY":
+        tone = "friendly and conversational"
+        length = "2-3 sentences"
+        detail = "Respond naturally as if you are the recipient replying to a friend or colleague."
+    else:
+        return None
 
+    # Detect email type for tailored instructions
+    body_lower = em["body"].lower()
+    subject_lower = em["subject"].lower()
+
+    if any(w in body_lower + subject_lower for w in ["invoice", "payment", "contract", "legal", "agreement", "solicitor", "lawyer"]):
+        tone = "formal and professional"
+        length = "4-6 sentences"
+        detail = "Acknowledge receipt, confirm you have reviewed the matter, state any initial position or questions clearly, and indicate when a full response will follow."
+
+    elif any(w in body_lower + subject_lower for w in ["meeting", "call", "schedule", "available", "availability", "interview"]):
+        tone = "professional and courteous"
+        length = "3-4 sentences"
+        detail = "Confirm your interest, suggest available times or ask for their availability, and keep it concise."
+
+    elif any(w in body_lower + subject_lower for w in ["job", "application", "position", "role", "hire", "cv", "resume"]):
+        tone = "professional and enthusiastic"
+        length = "4-5 sentences"
+        detail = "Express genuine interest, briefly highlight relevant experience, and suggest next steps such as a call or interview."
+
+    elif any(w in body_lower + subject_lower for w in ["complaint", "issue", "problem", "unhappy", "disappointed", "refund"]):
+        tone = "empathetic and professional"
+        length = "4-5 sentences"
+        detail = "Acknowledge the issue, apologise where appropriate, explain what steps will be taken, and provide a timeframe for resolution."
+
+    elif any(w in body_lower + subject_lower for w in ["project", "task", "deadline", "deliverable", "update", "status"]):
+        tone = "professional and clear"
+        length = "4-6 sentences"
+        detail = "Acknowledge the request, provide a clear status update or response to each point raised, and confirm any next steps or deadlines."
+
+    prompt = f"""You are a professional personal email assistant drafting a reply on behalf of the recipient.
+
+Email details:
 From: {em['sender']}
 Subject: {em['subject']}
-Body: {em['body'][:500]}
+Body:
+{em['body'][:1000]}
 
-Respond in this exact format:
-DECISION: YES or NO
-REPLY: (2-3 sentence friendly reply, or NO-AUTO-REPLY)"""
+Instructions:
+- Tone: {tone}
+- Length: {length}
+- {detail}
+- Write in first person as if you are the recipient
+- Do NOT include a subject line
+- Do NOT include placeholders like [Your Name] — end the email naturally
+- Start directly with the reply content, no preamble
+
+Write the draft reply now:"""
 
     response = client.chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=150
+        max_tokens=300
     )
-    content = response.choices[0].message.content.strip()
+    return response.choices[0].message.content.strip()
 
-    if "DECISION: YES" in content:
-        match = re.search(r'REPLY:\s*(.+)', content, re.DOTALL)
-        if match:
-            reply = match.group(1).strip()
-            if reply != "NO-AUTO-REPLY":
-                return reply
-    return None
+# ── RUN SUMMARY EMAIL ─────────────────────────────────────
 
-def send_auto_reply(em, reply_text):
-    msg = MIMEText(reply_text)
-    msg["Subject"] = f"Re: {em['subject']}"
-    msg["From"]    = GMAIL_ADDRESS
-    msg["To"]      = em["reply_to"]
+def send_run_summary(mail, processed, unsubscribed, drafted):
+    """Send a short summary of what the agent did this run."""
+    if not processed:
+        print("  No emails processed — skipping summary.")
+        return
+
+    now  = datetime.now().strftime("%H:%M on %d %b %Y")
+    body = f"🤖 Email Agent Run Summary — {now}\n"
+    body += "=" * 50 + "\n\n"
+
+    body += f"📊 Processed {len(processed)} email(s) this run:\n"
+    for cat in LABELS:
+        count = sum(1 for _, c in processed if c == cat)
+        if count:
+            body += f"   {ICONS[cat]} {cat}: {count}\n"
+
+    if unsubscribed:
+        body += f"\n📤 Unsubscribed from {len(unsubscribed)} newsletter(s):\n"
+        for sender, subject in unsubscribed:
+            body += f"   • {subject[:60]} — {sender}\n"
+
+    if drafted:
+        body += f"\n💬 {len(drafted)} draft reply(s) saved to your Drafts folder:\n"
+        for sender, subject in drafted:
+            body += f"   • Re: {subject[:60]} — {sender}\n"
+        body += "\n   ➜ Check Gmail Drafts, review and send when ready.\n"
+
+    body += "\n" + "-" * 50
+    body += f"\nNext run in ~30 minutes."
+
+    msg = MIMEText(body)
+    msg["Subject"] = (
+        f"🤖 Agent Run — {len(processed)} processed"
+        + (f", {len(unsubscribed)} unsub'd" if unsubscribed else "")
+        + (f", {len(drafted)} drafts" if drafted else "")
+    )
+    msg["From"] = GMAIL_ADDRESS
+    msg["To"]   = GMAIL_ADDRESS
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_ADDRESS, GMAIL_APP_PASS)
         server.send_message(msg)
+    print("📋 Run summary sent.")
 
 # ── DAILY DIGEST ──────────────────────────────────────────
 
-def send_daily_digest(summaries):
-    if not summaries:
+def send_daily_digest(processed):
+    if not processed:
         return
 
-    urgent      = [e for e, c in summaries if c == "URGENT"]
-    needs_reply = [e for e, c in summaries if c == "NEEDS-REPLY"]
-    newsletters = [e for e, c in summaries if c == "NEWSLETTER"]
+    urgent      = [(e, c) for e, c in processed if c == "URGENT"]
+    needs_reply = [(e, c) for e, c in processed if c == "NEEDS-REPLY"]
+    newsletters = [(e, c) for e, c in processed if c == "NEWSLETTER"]
 
     now  = datetime.now().strftime("%A %d %B %Y")
     body = f"📬 Daily Email Digest — {now}\n"
@@ -233,33 +321,33 @@ def send_daily_digest(summaries):
 
     if urgent:
         body += f"🚨 URGENT — {len(urgent)} email(s) need attention today\n"
-        for e in urgent:
+        for e, _ in urgent:
             body += f"   • {e['subject']} — {e['sender']}\n"
         body += "\n"
 
     if needs_reply:
         body += f"🔴 NEEDS REPLY — {len(needs_reply)} email(s)\n"
-        for e in needs_reply:
+        for e, _ in needs_reply:
             body += f"   • {e['subject']} — {e['sender']}\n"
         body += "\n"
 
     if newsletters:
         body += f"📰 NEWSLETTERS UNSUBSCRIBED — {len(newsletters)}\n"
-        for e in newsletters:
+        for e, _ in newsletters:
             body += f"   • {e['subject']} — {e['sender']}\n"
         body += "\n"
 
     counts = {}
-    for _, cat in summaries:
+    for _, cat in processed:
         counts[cat] = counts.get(cat, 0) + 1
 
-    body += "📊 Full breakdown\n"
+    body += "📊 Full breakdown:\n"
     for cat, count in counts.items():
         body += f"   {ICONS[cat]} {cat}: {count}\n"
 
     msg = MIMEText(body)
     msg["Subject"] = (
-        f"🤖 Daily Digest — {datetime.now().strftime('%d %b')} "
+        f"📬 Daily Digest — {datetime.now().strftime('%d %b')} "
         f"({len(urgent)} urgent, {len(needs_reply)} to reply)"
     )
     msg["From"] = GMAIL_ADDRESS
@@ -281,9 +369,11 @@ def main():
     ensure_labels(mail)
 
     emails = fetch_unread_emails(mail)
-    print(f"Found {len(emails)} unread email(s).")
+    print(f"Found {len(emails)} unread email(s) to process.")
 
-    summaries = []
+    processed    = []   # list of (email, category)
+    unsubscribed = []   # list of (sender, subject)
+    drafted      = []   # list of (sender, subject)
 
     for em in emails:
         print(f"  → {em['subject'][:60]}")
@@ -295,23 +385,30 @@ def main():
         # Auto-unsubscribe newsletters
         if category == "NEWSLETTER" and em["unsubscribe"]:
             success = auto_unsubscribe(em)
-            print(f"     {'📤 Unsubscribed' if success else '⚠️  Unsubscribe failed'}")
+            if success:
+                unsubscribed.append((em["sender"], em["subject"]))
+                print(f"     📤 Unsubscribed")
+            else:
+                print(f"     ⚠️  Unsubscribe failed")
 
-        # Auto-reply simple personal emails
+        # Save draft reply for personal emails
         if category in ["URGENT", "NEEDS-REPLY"]:
-            reply = draft_auto_reply(em)
+            reply = draft_reply(em, category)
             if reply:
-                send_auto_reply(em, reply)
-                print(f"     💬 Auto-reply sent")
+                save_draft(mail, em, reply)
+                drafted.append((em["sender"], em["subject"]))
+                print(f"     💬 Draft reply saved")
 
-        summaries.append((em, category))
+        processed.append((em, category))
+
+    # Always send run summary if anything was processed
+    send_run_summary(mail, processed, unsubscribed, drafted)
+
+    # Send full daily digest once a day at digest hour
+    if is_digest_time:
+        send_daily_digest(processed)
 
     mail.logout()
-
-    # Send digest once a day at 9AM BST
-    if is_digest_time:
-        send_daily_digest(summaries)
-
     print("Done.")
 
 if __name__ == "__main__":
