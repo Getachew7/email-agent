@@ -7,7 +7,7 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import decode_header
-from datetime import datetime
+from datetime import datetime, timedelta
 from groq import Groq
 
 # ── CONFIG ───────────────────────────────────────────────
@@ -16,7 +16,21 @@ GMAIL_APP_PASS     = os.environ["GMAIL_APP_PASS"]
 GROQ_API_KEY       = os.environ["GROQ_API_KEY"]
 MODEL              = "llama-3.1-8b-instant"
 DIGEST_HOUR        = 8        # 8 UTC = 9AM BST
-MAX_EMAILS_PER_RUN = 80
+MAX_EMAILS_PER_RUN = 50
+
+# Senders that should NEVER get a draft reply
+NO_DRAFT_SENDERS = [
+    "notification",
+    "noreply",
+    "no-reply",
+    "donotreply",
+    "facebookmail.com",
+    "slack.com",
+    "linkedin.com",
+    "twitter.com",
+    "instagram.com",
+    "github.com",
+]
 
 PRIORITY_SENDERS = [
     "mebiratu21@gmail.com",
@@ -57,7 +71,8 @@ def apply_label(mail, msg_id, label):
 
 def fetch_unread_emails(mail):
     mail.select("inbox")
-    _, message_ids = mail.search(None, "UNSEEN")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%d-%b-%Y")
+    _, message_ids = mail.search(None, f'(UNSEEN SINCE "{yesterday}")')
 
     emails = []
     if not message_ids[0]:
@@ -391,8 +406,11 @@ def main():
             else:
                 print(f"     ⚠️  Unsubscribe failed")
 
-        # Save draft reply for personal emails
-        if category in ["URGENT", "NEEDS-REPLY"]:
+        # Save draft reply — skip known automated senders
+        sender_lower = em["sender"].lower()
+        is_automated = any(x in sender_lower for x in NO_DRAFT_SENDERS)
+        
+        if category in ["URGENT", "NEEDS-REPLY"] and not is_automated:
             reply = draft_reply(em, category)
             if reply:
                 save_draft(mail, em, reply)
