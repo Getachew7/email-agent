@@ -19,8 +19,8 @@ DIGEST_HOUR        = 8        # 8 UTC = 9AM BST
 MAX_EMAILS_PER_RUN = 80
 
 PRIORITY_SENDERS = [
-    # "mum@gmail.com",
-    # "boss@work.com",
+    "mebiratu21@gmail.com",
+    "info@destaintelligence.com",
 ]
 
 LABELS = {
