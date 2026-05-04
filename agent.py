@@ -16,7 +16,7 @@ GMAIL_APP_PASS     = os.environ["GMAIL_APP_PASS"]
 GROQ_API_KEY       = os.environ["GROQ_API_KEY"]
 MODEL              = "llama-3.1-8b-instant"
 DIGEST_HOUR        = 8        # 8 UTC = 9AM BST
-MAX_EMAILS_PER_RUN = 20
+MAX_EMAILS_PER_RUN = 80
 
 PRIORITY_SENDERS = [
     # "mum@gmail.com",
