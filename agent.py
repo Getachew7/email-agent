@@ -18,8 +18,8 @@ DIGEST_HOUR    = 8   # 8AM UTC = 9AM BST
 
 # Add senders who should ALWAYS be flagged Urgent
 PRIORITY_SENDERS = [
-    "mum@gmail.com",
-    "boss@work.com",
+    "mebiratu21@gmail.com",
+    "info@destaintelligence.com",
     # add any email address here
 ]
 
