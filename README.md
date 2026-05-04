@@ -1,6 +1,6 @@
 # 📬 AI Email Agent
 
-An automated Gmail labelling, summarisation, and draft-reply agent powered by
+An automated Gmail labelling, draft-reply, unsubscribe, and digest agent powered by
 [Groq](https://groq.com) and [GitHub Actions](https://github.com/features/actions).
 Runs every 30 minutes — completely free, no server required.
 
@@ -10,12 +10,12 @@ Runs every 30 minutes — completely free, no server required.
 
 | Feature | Description |
 |---|---|
-| 🏷️ Auto-labelling | Classifies every unread email into 5 categories |
-| 🚨 Priority senders | Configured senders are always flagged Urgent |
+| 🏷️ Auto-labelling | Classifies every unread email into 5 categories using AI |
+| 🚨 Priority senders | Configured senders are always flagged Urgent, bypassing AI |
 | 📤 Auto-unsubscribe | Detects and fires unsubscribe on newsletters automatically |
-| 💬 Draft replies | Saves AI-generated replies to Gmail Drafts for your review |
-| 📋 Run summary | Emails you a summary after every run |
-| 📬 Daily digest | Morning summary of urgent and needs-reply emails |
+| 💬 Draft replies | Drafts replies for all email types — casual, work, legal, scheduling, complaints. Saves to Gmail Drafts for your review — nothing sends automatically |
+| 📋 Run summary | Emails you a full summary after every run showing what was processed, unsubscribed, and drafted |
+| 📬 Daily digest | Morning summary of urgent and needs-reply emails sent once per day |
 
 ### Gmail Labels Created Automatically
 
@@ -23,7 +23,7 @@ Runs every 30 minutes — completely free, no server required.
 |---|---|
 | `AI-Urgent` | Needs your attention today |
 | `AI-Needs-Reply` | Reply when you can |
-| `AI-Newsletter` | Marketing / newsletters |
+| `AI-Newsletter` | Marketing / newsletters (auto-unsubscribed) |
 | `AI-Notification` | Automated system alerts |
 | `AI-No-Action` | No action needed |
 
@@ -44,6 +44,9 @@ GitHub Actions (cron every 30 min)
    │  Groq   │  ← llama-3.1-8b-instant (classify + draft)
    └─────────┘
 ```
+
+**Email window:** Each run processes unread emails from the **last 48 hours** only —
+old mail is never touched, and anything missed yesterday is caught today.
 
 ---
 
@@ -108,6 +111,8 @@ jobs:
 ### 6. Test It
 Go to **Actions → Daily Email Agent → Run workflow**
 
+You should receive a run summary email in your inbox within 2–4 minutes.
+
 ---
 
 ## ⚙️ Configuration
@@ -115,13 +120,71 @@ Go to **Actions → Daily Email Agent → Run workflow**
 Edit the config section at the top of `agent.py`:
 
 ```python
-MAX_EMAILS_PER_RUN = 20       # emails processed per run
-DIGEST_HOUR        = 8        # daily digest hour (UTC)
+MAX_EMAILS_PER_RUN = 20       # max emails processed per run — keep at 20 to avoid timeouts
+DIGEST_HOUR        = 8        # daily digest hour in UTC (8 = 9AM BST)
 
+# Senders always flagged Urgent regardless of email content
 PRIORITY_SENDERS = [
-    "mum@gmail.com",          # always flagged Urgent
+    "mum@gmail.com",
     "boss@work.com",
 ]
+
+# Senders that will NEVER receive a draft reply (automated/notification senders)
+NO_DRAFT_SENDERS = [
+    "notification",
+    "noreply",
+    "no-reply",
+    "donotreply",
+    "facebookmail.com",
+    "slack.com",
+    "linkedin.com",
+    "twitter.com",
+    "instagram.com",
+    "github.com",
+]
+```
+
+### Why MAX_EMAILS_PER_RUN = 20?
+Each email makes 2 Groq API calls (classify + draft). At 20 emails per run, the job
+completes in under 2 minutes. GitHub Actions free tier jobs become unreliable above
+6 minutes. The agent runs every 30 minutes so your inbox stays current without
+needing large batch sizes.
+
+---
+
+## 💬 How Draft Replies Work
+
+The agent drafts replies for **all** emails classified as `AI-Urgent` or `AI-Needs-Reply`.
+It detects the email type and adjusts tone and length automatically:
+
+| Email type | Tone | Length |
+|---|---|---|
+| Casual / personal | Friendly, conversational | 2–3 sentences |
+| Work / project update | Professional, clear | 4–6 sentences |
+| Legal / financial | Formal, measured | 4–6 sentences |
+| Meeting / scheduling | Courteous, concise | 3–4 sentences |
+| Job application | Professional, enthusiastic | 4–5 sentences |
+| Complaint | Empathetic, solution-focused | 4–5 sentences |
+| Urgent | Direct, action-oriented | 3–5 sentences |
+
+All drafts are saved to your **Gmail Drafts folder**. Nothing is ever sent automatically.
+Known automated senders (Slack, Facebook, LinkedIn etc.) are excluded from drafting.
+Duplicate drafts are prevented — if a draft already exists for a subject it is skipped.
+
+---
+
+## 📋 Run Summary Email
+
+After every run you receive a summary email showing:
+
+- Total emails processed with a breakdown by category
+- List of newsletters that were auto-unsubscribed
+- List of draft replies saved to your Drafts folder
+- Reminder to check Drafts before sending
+
+Example subject line:
+```
+🤖 Agent Run — 20 processed, 8 unsub'd, 3 drafts
 ```
 
 ---
@@ -154,14 +217,14 @@ Change the model in the config:
 MODEL = "gpt-4o-mini"   # cheap, fast, accurate
 ```
 
-Update the workflow secret in `daily.yml`:
-```yaml
-OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-```
-
 Update `agent.py` config:
 ```python
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+```
+
+Update the workflow secret in `daily.yml`:
+```yaml
+OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 Install the right library in `daily.yml`:
@@ -173,8 +236,8 @@ Everything else stays identical — the OpenAI SDK uses the same
 `.chat.completions.create()` interface as Groq.
 
 ### Cost Estimate (OpenAI)
-Each email uses ~200 tokens. At GPT-4o mini pricing:
-- 100 emails/day ≈ $0.003/day ≈ **$0.09/month**
+Each email uses ~300 tokens (classify + draft). At GPT-4o mini pricing:
+- 100 emails/day ≈ $0.004/day ≈ **$0.12/month**
 
 ---
 
@@ -183,7 +246,7 @@ Each email uses ~200 tokens. At GPT-4o mini pricing:
 | Service | Free Limit | Your Usage |
 |---|---|---|
 | GitHub Actions | 2,000 min/month | ~720 min/month |
-| Groq API | 14,400 requests/day | ~20–100/day |
+| Groq API | 14,400 requests/day | ~40–200/day |
 | Gmail IMAP | Unlimited | N/A |
 
 ---
@@ -194,8 +257,9 @@ Each email uses ~200 tokens. At GPT-4o mini pricing:
 - Gmail App Password has limited scope — cannot change your Google password
 - Emails are processed in memory only — never written to disk or logged
 - Groq does not train on API data per their privacy policy
-- For highly sensitive emails (banking, legal, medical) consider adding
-  those senders to a skip list
+- Known automated senders are excluded from AI draft replies
+- For highly sensitive emails (banking, legal, medical) add those senders
+  to `NO_DRAFT_SENDERS` to prevent drafting
 
 ---
 
@@ -214,13 +278,17 @@ email-agent/
 
 ## 🛠️ Troubleshooting
 
-| Error | Fix |
+| Problem | Fix |
 |---|---|
-| `model_decommissioned` | Update `MODEL` in config to `llama-3.1-8b-instant` |
+| `model_decommissioned` error | Update `MODEL` to `llama-3.1-8b-instant` |
 | `Authentication failed` | Regenerate Gmail App Password |
 | `Bad credentials` | Check GitHub Secrets are named exactly right |
-| Runs taking too long | Lower `MAX_EMAILS_PER_RUN` |
-| Labels not appearing | Trigger a manual run to create them |
+| Runs taking too long / timing out | Set `MAX_EMAILS_PER_RUN = 20` |
+| Labels not appearing in Gmail | Trigger a manual run to create them |
+| Old emails being processed | Check `fetch_unread_emails` uses `UNSEEN SINCE yesterday` |
+| Duplicate drafts appearing | Ensure `already_drafted()` check is in `main()` |
+| Wrong emails getting drafted | Add sender domain to `NO_DRAFT_SENDERS` list |
+| Scheduled runs not firing | GitHub can delay up to 30 min — wait and refresh Actions tab |
 
 ---
 
