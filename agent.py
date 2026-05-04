@@ -14,6 +14,7 @@ GMAIL_ADDRESS  = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASS = os.environ["GMAIL_APP_PASS"]
 GROQ_API_KEY   = os.environ["GROQ_API_KEY"]
 MODEL          = "llama-3.1-8b-instant"
+MAX_EMAILS_PER_RUN = 20
 DIGEST_HOUR    = 8   # 8AM UTC = 9AM BST
 
 # Add senders who should ALWAYS be flagged Urgent
@@ -63,7 +64,10 @@ def fetch_unread_emails(mail):
     if not message_ids[0]:
         return emails
 
-    for mid in message_ids[0].split():
+    all_ids = message_ids[0].split()
+    recent_ids = all_ids[-MAX_EMAILS_PER_RUN:]
+
+    for mid in recent_ids:
         _, msg_data = mail.fetch(mid, "(RFC822)")
         msg = email.message_from_bytes(msg_data[0][1])
 
